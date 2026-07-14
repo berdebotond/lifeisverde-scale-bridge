@@ -1,0 +1,55 @@
+name: build-exe
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build Windows exe
+        run: npm run build:exe
+
+      - name: Smoke test (exe must boot + open the WebSocket)
+        shell: pwsh
+        run: |
+          $proc = Start-Process -FilePath "dist/livcsc-scale-bridge.exe" -PassThru -RedirectStandardOutput "out.log" -RedirectStandardError "err.log"
+          Start-Sleep -Seconds 6
+          if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+          Write-Host "----- stdout -----"; Get-Content out.log -ErrorAction SilentlyContinue
+          Write-Host "----- stderr -----"; Get-Content err.log -ErrorAction SilentlyContinue
+          if (Select-String -Path out.log -Pattern "WebSocket listening" -Quiet) {
+            Write-Host "SMOKE OK"
+          } else {
+            Write-Error "exe did not start the WebSocket server"; exit 1
+          }
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: livcsc-scale-bridge
+          path: dist/livcsc-scale-bridge.exe
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/livcsc-scale-bridge.exe
+          body: |
+            Life is Verde scale bridge — standalone Windows executable.
+            No Node.js needed: download, run, and connect the POS via "App puente de báscula".
+            See the README for setup and the OHAUS continuous-print step.

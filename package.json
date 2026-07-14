@@ -1,0 +1,28 @@
+{
+  "name": "livcsc-scale-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Reads a weighing scale over serial and serves the weight on a local WebSocket for the Life is Verde POS.",
+  "license": "UNLICENSED",
+  "bin": "bridge.js",
+  "main": "bridge.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node bridge.js",
+    "build:exe": "pkg . --targets node22-win-x64 --output dist/livcsc-scale-bridge.exe"
+  },
+  "dependencies": {
+    "serialport": "^12.0.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@yao-pkg/pkg": "^6.3.0"
+  },
+  "pkg": {
+    "assets": [
+      "node_modules/@serialport/bindings-cpp/prebuilds/win32-x64/**/*"
+    ]
+  }
+}
