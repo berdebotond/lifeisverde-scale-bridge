@@ -11,7 +11,7 @@
   },
   "scripts": {
     "start": "node bridge.js",
-    "build:exe": "pkg . --targets node22-win-x64 --output dist/livcsc-scale-bridge.exe"
+    "build:exe": "pkg . --targets node22-win-x64 --output dist/livcsc-scale-bridge.exe --public"
   },
   "dependencies": {
     "serialport": "^12.0.0",
