@@ -86,48 +86,70 @@ function rankPorts(ports) {
     .sort((a, b) => score(a) - score(b));
 }
 
-/** Open one port at one baud briefly; resolve true if a weight line arrives. */
-function probe(path, baud) {
+/**
+ * Open one port at one baud and wait briefly for a valid weight line. On
+ * success the port is left OPEN and returned so streaming reuses the same
+ * handle — closing and immediately reopening races the OS releasing the port
+ * on Windows ("Opening COMx: Access denied"). Returns null (port closed) when
+ * nothing valid arrives in time.
+ */
+function openAndDetect(path, baud) {
   return new Promise((resolve) => {
     let settled = false;
     let buffer = "";
     const port = new SerialPort({ path, baudRate: baud, autoOpen: false });
-    const finish = (ok) => {
+
+    const closeAnd = (value) => {
+      try {
+        port.close(() => resolve(value));
+      } catch {
+        resolve(value);
+      }
+    };
+    const onData = (chunk) => {
+      buffer += chunk.toString("latin1");
+      const parts = buffer.split(/\r\n|\r|\n/);
+      buffer = parts.pop() || "";
+      for (const line of parts) {
+        if (parseSerialLine(line)) {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          port.removeListener("data", onData);
+          // onError stays attached (settled-guarded no-op) so the port never
+          // has zero 'error' listeners before startStreaming adds its own.
+          resolve(port); // keep OPEN — handed straight to startStreaming
+          return;
+        }
+      }
+    };
+    const onError = () => {
       if (settled) return;
       settled = true;
-      try {
-        port.close(() => {});
-      } catch {
-        /* ignore */
-      }
-      resolve(ok);
+      clearTimeout(timer);
+      closeAnd(null);
     };
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      port.removeListener("data", onData);
+      // Deliberately KEEP the error listener: an 'error' emitted while the
+      // port is closing would otherwise have no listener and crash the
+      // process. onError is settled-guarded, so it just swallows late errors.
+      closeAnd(null);
+    }, PROBE_MS);
+
     port.open((err) => {
-      if (err) return finish(false);
-      const timer = setTimeout(() => finish(false), PROBE_MS);
-      port.on("data", (chunk) => {
-        buffer += chunk.toString("latin1");
-        const parts = buffer.split(/\r\n|\r|\n/);
-        buffer = parts.pop() || "";
-        for (const line of parts) {
-          if (parseSerialLine(line)) {
-            clearTimeout(timer);
-            return finish(true);
-          }
-        }
-      });
-      port.on("error", () => {
-        clearTimeout(timer);
-        finish(false);
-      });
+      if (err) return onError();
+      port.on("data", onData);
+      port.on("error", onError);
     });
   });
 }
 
-/** Stream weight from a confirmed port/baud until it closes or errors. */
-function stream(path, baud) {
+/** Stream weight from an already-open port until it closes or errors. */
+function startStreaming(port, path, baud) {
   const tracker = makeStabilityTracker();
-  const port = new SerialPort({ path, baudRate: baud });
   let buffer = "";
   setStatus({ type: "status", state: "connected", port: path, baud });
   log(`Streaming from ${path} @ ${baud} baud.`);
@@ -180,9 +202,10 @@ async function detectAndStream() {
     for (const baud of BAUD_RATES) {
       log(`Probing ${p.path} @ ${baud}…`);
       // eslint-disable-next-line no-await-in-loop
-      if (await probe(p.path, baud)) {
+      const port = await openAndDetect(p.path, baud);
+      if (port) {
         log(`Scale found on ${p.path} @ ${baud}.`);
-        stream(p.path, baud);
+        startStreaming(port, p.path, baud);
         return;
       }
     }
